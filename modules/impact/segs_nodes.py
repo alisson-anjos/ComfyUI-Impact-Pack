@@ -1918,57 +1918,58 @@ class SEGSUpscalerPipe:
                                  upscale_model_opt=upscale_model_opt, upscaler_hook_opt=upscaler_hook_opt, scheduler_func_opt=scheduler_func_opt)
 
 
-class CLIPVisionApplySEGS:
+class SEGSCLIPStyleModelApply:
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
                 "segs": ("SEGS",),
                 "clip_vision": ("CLIP_VISION",),
-                "reference_image": ("IMAGE",),
+                "style_model": ("STYLE_MODEL",),
+                "conditioning": ("CONDITIONING",),
                 "context_crop_factor": ("FLOAT", {"default": 1.2, "min": 1.0, "max": 100, "step": 0.1}),
                 "crop": (["center", "none"], {"default": "center"}),
+                "strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.001}),
+                "strength_type": (["multiply"], {"default": "multiply"}),
+                "reference_image": ("IMAGE",),
             }
         }
 
-    RETURN_TYPES = ("SEGS",)
-    FUNCTION = "doit"
+    RETURN_TYPES = ("CONDITIONING",)
+    FUNCTION = "apply_clip_stylemodel"
     CATEGORY = "ImpactPack/Util"
 
     @staticmethod
-    def doit(segs, clip_vision, reference_image, context_crop_factor, crop):
+    def apply_clip_stylemodel(segs, clip_vision, style_model, conditioning, context_crop_factor, crop, strength, strength_type, reference_image):
         new_segs = []
         crop_image = crop == "center"
-
-        # Dimensões da imagem original
         h, w = segs[0]
 
-        # Ajustar a referência da imagem se necessário
+        # Redimensionar reference_image, se necessário
         if reference_image.shape[2] != w or reference_image.shape[1] != h:
             reference_image = tensor_resize(reference_image, w, h)
 
         # Processar cada segmento
         for seg in segs[1]:
-            # Calcular a região de recorte com base no context_crop_factor
+            # Gerar a região de recorte e o cropped_image
             context_crop_region = make_crop_region(w, h, seg.crop_region, context_crop_factor)
-
-            # Gerar o cropped_image a partir da reference_image
             cropped_image = crop_image(reference_image, context_crop_region)
 
-            # Aplicar o modelo CLIP Vision no recorte
-            embedding = clip_vision.encode_image(cropped_image, crop=crop_image)
+            # Aplicar CLIP Vision no cropped_image
+            clip_output = clip_vision.encode_image(cropped_image, crop=crop_image)
 
-            # Criar um novo segmento com o embedding gerado
-            new_seg = SEG(
-                cropped_image=cropped_image,
-                cropped_mask=seg.cropped_mask,
-                confidence=seg.confidence,
-                crop_region=seg.crop_region,
-                bbox=seg.bbox,
-                label=seg.label,
-                control_net_wrapper=embedding
-            )
-            new_segs.append(new_seg)
+            # Aplicar Style Model no output do CLIP Vision
+            cond = style_model.get_cond(clip_output).flatten(start_dim=0, end_dim=1).unsqueeze(dim=0)
+            if strength_type == "multiply":
+                cond *= strength
 
-        # Retornar os novos segmentos junto com as dimensões originais
-        return ((segs[0], new_segs), )
+            # Atualizar conditioning
+            c = []
+            for t in conditioning:
+                n = [torch.cat((t[0], cond), dim=1), t[1].copy()]
+                c.append(n)
+
+            new_segs.append(seg)
+
+        # Retornar o conditioning atualizado
+        return (c,)
