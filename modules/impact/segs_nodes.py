@@ -1916,3 +1916,32 @@ class SEGSUpscalerPipe:
         return SEGSUpscaler.doit(image, segs, model, clip, vae, rescale_factor, resampling_method, supersample, rounding_modulus,
                                  seed, steps, cfg, sampler_name, scheduler, positive, negative, denoise, feather, inpaint_model, noise_mask_feather,
                                  upscale_model_opt=upscale_model_opt, upscaler_hook_opt=upscaler_hook_opt, scheduler_func_opt=scheduler_func_opt)
+
+
+class SEGSCLIPVisionEncode:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "clip_vision": ("CLIP_VISION",),
+                "segs": ("SEGS",),
+                "crop": (["center", "none"],)
+            }
+        }
+    RETURN_TYPES = ("CLIP_VISION_OUTPUT",)
+    FUNCTION = "encode"
+    CATEGORY = "conditioning"
+
+    def encode(self, clip_vision, segs, crop):
+        crop_image = crop == "center"
+
+        outputs = []
+
+        for seg in segs[1]:
+            if seg.cropped_image is not None:
+                output = clip_vision.encode_image(seg.cropped_image, crop=crop_image)
+                outputs.append(output)
+            else:
+                raise ValueError("Segmento não contém 'cropped_image'.")
+
+        return (outputs,)

@@ -218,6 +218,7 @@ NODE_CLASS_MAPPINGS = {
     "ImpactSEGSPicker": SEGSPicker,
     "ImpactMakeTileSEGS": MakeTileSEGS,
     "ImpactSEGSMerge": SEGSMerge,
+    "SEGSCLIPVisionEncode": SEGSCLIPVisionEncode,
 
     "SEGSDetailerForAnimateDiff": SEGSDetailerForAnimateDiff,
 
