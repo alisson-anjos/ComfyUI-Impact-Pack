@@ -1918,30 +1918,57 @@ class SEGSUpscalerPipe:
                                  upscale_model_opt=upscale_model_opt, upscaler_hook_opt=upscaler_hook_opt, scheduler_func_opt=scheduler_func_opt)
 
 
-class SEGSCLIPVisionEncode:
+class CLIPVisionApplySEGS:
     @classmethod
-    def INPUT_TYPES(s):
+    def INPUT_TYPES(cls):
         return {
             "required": {
-                "clip_vision": ("CLIP_VISION",),
                 "segs": ("SEGS",),
-                "crop": (["center", "none"],)
+                "clip_vision": ("CLIP_VISION",),
+                "reference_image": ("IMAGE",),
+                "context_crop_factor": ("FLOAT", {"default": 1.2, "min": 1.0, "max": 100, "step": 0.1}),
+                "crop": (["center", "none"], {"default": "center"}),
             }
         }
-    RETURN_TYPES = ("CLIP_VISION_OUTPUT",)
-    FUNCTION = "encode"
-    CATEGORY = "conditioning"
 
-    def encode(self, clip_vision, segs, crop):
+    RETURN_TYPES = ("SEGS",)
+    FUNCTION = "doit"
+    CATEGORY = "ImpactPack/Util"
+
+    @staticmethod
+    def doit(segs, clip_vision, reference_image, context_crop_factor, crop):
+        new_segs = []
         crop_image = crop == "center"
 
-        outputs = []
+        # Dimensões da imagem original
+        h, w = segs[0]
 
+        # Ajustar a referência da imagem se necessário
+        if reference_image.shape[2] != w or reference_image.shape[1] != h:
+            reference_image = tensor_resize(reference_image, w, h)
+
+        # Processar cada segmento
         for seg in segs[1]:
-            if seg.cropped_image is not None:
-                output = clip_vision.encode_image(seg.cropped_image, crop=crop_image)
-                outputs.append(output)
-            else:
-                raise ValueError("Segmento não contém 'cropped_image'.")
+            # Calcular a região de recorte com base no context_crop_factor
+            context_crop_region = make_crop_region(w, h, seg.crop_region, context_crop_factor)
 
-        return (outputs,)
+            # Gerar o cropped_image a partir da reference_image
+            cropped_image = crop_image(reference_image, context_crop_region)
+
+            # Aplicar o modelo CLIP Vision no recorte
+            embedding = clip_vision.encode_image(cropped_image, crop=crop_image)
+
+            # Criar um novo segmento com o embedding gerado
+            new_seg = SEG(
+                cropped_image=cropped_image,
+                cropped_mask=seg.cropped_mask,
+                confidence=seg.confidence,
+                crop_region=seg.crop_region,
+                bbox=seg.bbox,
+                label=seg.label,
+                control_net_wrapper=embedding
+            )
+            new_segs.append(new_seg)
+
+        # Retornar os novos segmentos junto com as dimensões originais
+        return ((segs[0], new_segs), )
